@@ -93,6 +93,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromKeyColumnUsage(sctx, dbs)
 		case infoschema.TableMetricTables:
 			e.setDataForMetricTables(sctx)
+		case infoschema.TableProfiling:
+			e.setDataForPseudoProfiling(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
 			e.dataForCollationCharacterSetApplicability()
 		case infoschema.TableUserPrivileges:
@@ -325,8 +327,9 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 					"",                    // NULLABLE
 					"BTREE",               // INDEX_TYPE
 					"",                    // COMMENT
-					"NULL",                // Expression
 					"",                    // INDEX_COMMENT
+					"YES",                 // IS_VISIBLE
+					"NULL",                // Expression
 				)
 				rows = append(rows, record)
 			}
@@ -347,6 +350,12 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 			if mysql.HasNotNullFlag(col.Flag) {
 				nullable = ""
 			}
+
+			visible := "YES"
+			if index.Invisible {
+				visible = "NO"
+			}
+
 			colName := col.Name.O
 			expression := "NULL"
 			tblCol := table.Columns[col.Offset]
@@ -354,6 +363,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
 			}
+
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.Name.O,         // TABLE_SCHEMA
@@ -370,8 +380,9 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				nullable,              // NULLABLE
 				"BTREE",               // INDEX_TYPE
 				"",                    // COMMENT
-				expression,            // Expression
 				"",                    // INDEX_COMMENT
+				visible,               // IS_VISIBLE
+				expression,            // Expression
 			)
 			rows = append(rows, record)
 		}
@@ -1226,6 +1237,33 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) 
 // setDataForAnalyzeStatus gets all the analyze jobs.
 func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
 	e.rows = dataForAnalyzeStatusHelper(sctx)
+}
+
+// setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
+func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
+	if v, ok := sctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
+		row := types.MakeDatums(
+			0,                      // QUERY_ID
+			0,                      // SEQ
+			"",                     // STATE
+			types.NewDecFromInt(0), // DURATION
+			types.NewDecFromInt(0), // CPU_USER
+			types.NewDecFromInt(0), // CPU_SYSTEM
+			0,                      // CONTEXT_VOLUNTARY
+			0,                      // CONTEXT_INVOLUNTARY
+			0,                      // BLOCK_OPS_IN
+			0,                      // BLOCK_OPS_OUT
+			0,                      // MESSAGES_SENT
+			0,                      // MESSAGES_RECEIVED
+			0,                      // PAGE_FAULTS_MAJOR
+			0,                      // PAGE_FAULTS_MINOR
+			0,                      // SWAPS
+			"",                     // SOURCE_FUNCTION
+			"",                     // SOURCE_FILE
+			0,                      // SOURCE_LINE
+		)
+		e.rows = append(e.rows, row)
+	}
 }
 
 func (e *memtableRetriever) setDataForServersInfo() error {
